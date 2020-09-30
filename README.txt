@@ -29,7 +29,6 @@ wait a few seconds
 @RestController
 @CrossOrigin(origins = "http://localhost:4200") // allows local debugging with Angular
 @EnableAutoConfiguration
-@SpringBootApplication
 public class CompAnalystController {
 
 7. right click source -> organize imports
