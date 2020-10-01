@@ -28,13 +28,8 @@ import org.springframework.web.bind.annotation.RestController;
 @EnableAutoConfiguration
 public class CompAnalystController {
 	
-    @RequestMapping(value = "/hello", produces = { "application/json" })
-    public String someMethodName() {
-
-		return "{hello}";
-
-	}
-
+	private CompAnalystCache cache;
+	
 	@Value("${companalyst.url.getapitoken}")
 	private String COMPURL_GETAPITOKEN;
 	
@@ -56,8 +51,42 @@ public class CompAnalystController {
 	@Value("${companalyst.auth.password}")
     private String password;
     
+	@Value("${companalyst.jedis.host}")
+    private String jedisHost;
+    
+	@Value("${companalyst.jedis.port}")
+    private int jedisPort;
+    
+	@Value("${companalyst.jedis.timeout}")
+    private int jedisTimeout;
+    
     private String authToken;
     private Date expireDate;
+
+	public CompAnalystController() {
+		super();
+	}
+	
+	private CompAnalystCache getCache() {
+		if (this.cache == null) {
+			this.cache = new CompAnalystCache(jedisHost, jedisPort, jedisTimeout);
+		}
+		return cache;
+	}
+
+	private void checkApiAuthentication() {
+        Date currDate = new Date();
+        if ((authToken == null) || (expireDate == null) || (currDate.after(expireDate))) {
+        	expireDate = null;
+        	authToken = null;
+        	getApiToken();
+        }
+	}
+
+    @RequestMapping(value = "/hello", produces = { "application/json" })
+    public String someMethodName() {
+		return "{hello}";
+	}
 
     @RequestMapping(value = "/getapitoken", produces = { "application/json" })
     public String getApiToken() {
@@ -93,40 +122,48 @@ public class CompAnalystController {
 
     //example http://localhost:8080/companyjob?jobcode=FN5502
     @RequestMapping(value = "/companyjob", produces = { "application/json" })
-    public String getCompanyJobList(@RequestParam(required = true) String jobcode) throws Exception {
+    public String getCompanyJob(@RequestParam(required = true) String jobcode) throws Exception {
     	System.out.println("jobcode parameter: [" + jobcode + "]");
-        String result =  getCompanyJob(COMPURL_COMPANYJOB, jobcode);
-        return result;
+    	String json = getCache().getCompanyJob(jobcode);
+    	if (json == null) {
+    		json =  getCompanyJob(COMPURL_COMPANYJOB, jobcode);
+    		getCache().saveCompanyJob(jobcode, json);
+    	}
+        return json;
     }
     
     @RequestMapping(value = "/companyjoblist", produces = { "application/json" })
     public String getCompanyJobList() throws Exception {
-    	String result =  getJson(COMPURL_COMPANYJOBLIST);
-        return result;
+    	String json = getCache().getCompanyJobList();
+    	if (json == null) {
+    		json =  getJson(COMPURL_COMPANYJOBLIST);
+    		getCache().saveCompanyJobList(json);
+    	}
+        return json;
     }
     
     @RequestMapping(value = "/employeelist", produces = { "application/json" })
     public String getEmployeeList() throws Exception {
-        String result = getJson(COMPURL_EMPLOYEELIST);
-        return result;
+    	String json = getCache().getCompanyJobList();
+    	if (json == null) {
+    		json =  getJson(COMPURL_EMPLOYEELIST);
+    		//need to secure redis server before caching this
+    		//getCache().saveEmployeeList(json);
+    	}
+        return json;
     }
     
+    //example http://localhost:8080/compensationjoblist
     @RequestMapping(value = "/compensationjoblist", produces = { "application/json" })
     public String getCompensationJobList() throws Exception {
-    	
-        String result = post(COMPURL_COMPENSATIONJOBLIST);
-        return result;
-    }
-    
-    private String getJson(String url) throws Exception {
-    	HttpClient client = HttpClientBuilder.create().build();
-        HttpGet get = new HttpGet(url);
-        get.setHeader("Content-Type", "application/json");
-        checkApiAuthentication();
-        get.addHeader("token", authToken);
-        HttpResponse response = client.execute(get);
-        String result = EntityUtils.toString(response.getEntity());
-        return result;
+    	String json = getCache().getCompensationJobList();
+    	if (json == null) {
+    		json =  getJson(COMPURL_COMPENSATIONJOBLIST);
+    		HashMap<String, String> params = buildCompensationJobListParameterMap();
+    		json = post(COMPURL_COMPENSATIONJOBLIST, params);
+    		getCache().saveCompensationJobList(json);
+    	}
+        return json;
     }
     
     //example http://localhost:8080/companyjob?jobcode=FN5502
@@ -143,14 +180,24 @@ public class CompAnalystController {
         return result;
     }
     
-    private String post(String url) throws Exception {
+    private String getJson(String url) throws Exception {
+    	HttpClient client = HttpClientBuilder.create().build();
+        HttpGet get = new HttpGet(url);
+        get.setHeader("Content-Type", "application/json");
+        checkApiAuthentication();
+        get.addHeader("token", authToken);
+        HttpResponse response = client.execute(get);
+        String result = EntityUtils.toString(response.getEntity());
+        return result;
+    }
+    
+    private String post(String url, HashMap<String, String> params) throws Exception {
     	HttpClient client = HttpClientBuilder.create().build();
         HttpPost post = new HttpPost(url);
         post.setHeader("Content-Type", "application/json");
         checkApiAuthentication();
         post.addHeader("token", authToken);
-        HashMap<String, String> map = buildCompensationJobListParameterMap();
-        JSONObject obj = new JSONObject(map);
+        JSONObject obj = new JSONObject(params);
         String json = obj.toString();
         HttpEntity entity = new ByteArrayEntity(json.getBytes("UTF-8"));
         post.setEntity(entity);
@@ -180,14 +227,5 @@ public class CompAnalystController {
 			return map;
 	}
     
-	private void checkApiAuthentication() {
-        Date currDate = new Date();
-        if ((authToken == null) || (expireDate == null) || (currDate.after(expireDate))) {
-        	expireDate = null;
-        	authToken = null;
-        	getApiToken();
-        }
-	}
-
 
 }
